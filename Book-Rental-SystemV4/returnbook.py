@@ -85,7 +85,7 @@ class ReturnBookDialog(object):
         self.due_Date.setFlat(False)
         self.due_Date.setObjectName("dueDate")
         self.return_date = QtWidgets.QPushButton(parent=ReturnDialog)
-        self.return_date.setGeometry(QtCore.QRect(370, 169, 141, 31))
+        self.return_date.setGeometry(QtCore.QRect(375, 169, 141, 31))
         font = QtGui.QFont()
         font.setFamily("Nirmala UI")
         font.setPointSize(9)
@@ -175,20 +175,23 @@ class ReturnBookDialog(object):
         QtCore.QMetaObject.connectSlotsByName(ReturnDialog)
         self.borrowedbook.currentIndexChanged.connect(self.on_borrowed_book_selected)
 
-        # Connect buttons to functions
-        self.return_date.clicked.connect(self.select_return_date)
+        # Set default return date to the current date
+        current_date = QDate.currentDate()
+        formatted_current_date = current_date.toString(QtCore.Qt.DateFormat.ISODate)
+        self.return_date.setText(formatted_current_date)
+
         self.ConfirmReturn.clicked.connect(self.confirm_return_book)
         self.Cancel.clicked.connect(self.dialog.close)
 
         self.populate_borrowed_books()
-        self.populate_customers()
+        
 
     def retranslateUi(self, ReturnDialog):
         _translate = QtCore.QCoreApplication.translate
         ReturnDialog.setWindowTitle(_translate("ReturnDialog", "Return Book"))
         self.label.setText(_translate("ReturnDialog", "Return Book"))
-        self.label_7.setText(_translate("ReturnDialog", "Rent Date:"))
-        self.label_8.setText(_translate("ReturnDialog", "to"))
+        self.label_7.setText(_translate("ReturnDialog", "Due Date:"))
+        self.label_8.setText(_translate("ReturnDialog", "Returned:"))
         self.ConfirmReturn.setText(_translate("ReturnDialog", "Return"))
         self.label_4.setText(_translate("ReturnDialog", "Borrowed Book"))
         self.Cancel.setText(_translate("ReturnDialog", "Cancel"))
@@ -196,6 +199,7 @@ class ReturnBookDialog(object):
         self.due_Date.setText(_translate("ReturnDialog", "Due Date"))
         self.return_date.setText(_translate("ReturnDialog", "Return Date"))
 
+   
     def populate_borrowed_books(self):
         try:
             # Connect to the database
@@ -210,24 +214,37 @@ class ReturnBookDialog(object):
             for book in books:
                 self.borrowedbook.addItem(book[0])
 
+                # Call populate_customers() with the selected book title
+                self.populate_customers(book[0])  # Pass the selected book title
+
             # Close the database connection
             conn.close()
         except sqlite3.Error as e:
             print("An error occurred while populating borrowed books:", e)
 
-    def populate_customers(self):
+    def populate_customers(self, selected_book_title):
         try:
             # Connect to the database
             conn = sqlite3.connect('library.db')
             cursor = conn.cursor()
 
-            # Fetch customer names from the customers table
-            cursor.execute("SELECT Name FROM customers")
-            customers = cursor.fetchall()
+            # Fetch the customer name of the current book rental
+            cursor.execute("""
+                SELECT c.Name 
+                FROM customers c
+                INNER JOIN rentals r ON c.CustomerID = r.CustomerID
+                INNER JOIN books b ON r.BookID = b.BookID
+                WHERE b.Title = ?
+            """, (selected_book_title,))
+            current_customer = cursor.fetchone()
 
-            # Populate the customer combobox with the fetched names
-            for customer in customers:
-                self.customer.addItem(customer[0])
+            if current_customer:
+                # Clear combobox and add the current customer
+                self.customer.clear()
+                self.customer.addItem(current_customer[0])
+
+                # Disable editing
+                self.customer.setDisabled(True)
 
             # Close the database connection
             conn.close()
@@ -262,45 +279,11 @@ class ReturnBookDialog(object):
         current_book_title = self.borrowedbook.currentText()
         rental_due_date = self.get_rental_due_date(current_book_title)
         self.due_Date.setText(rental_due_date)
+        
+        # Populate customers for the selected book
+        self.populate_customers(current_book_title)
 
-    def select_return_date(self):
-        try:
-            # Create a calendar dialog
-            calendar_dialog = QDialog()
-            calendar_dialog.setWindowTitle("Select Return Date")
-            calendar = QCalendarWidget(calendar_dialog)
-            calendar.setGeometry(10, 10, 400, 250)
-
-            # Create a button to confirm the date selection
-            select_button = QtWidgets.QPushButton("Select Date", calendar_dialog)
-            select_button.setGeometry(150, 270, 100, 30)
-            select_button.clicked.connect(lambda: self.on_returnDate_selected(calendar, calendar_dialog))
-
-            # Show the calendar dialog
-            calendar_dialog.exec()
-        except Exception as e:
-            print(e)
-
-    def on_returnDate_selected(self, calendar, dialog):
-        # Get the selected date from the calendar widget
-        selected_date = calendar.selectedDate()
-
-        # If no date is selected, return without setting the button text
-        if not selected_date.isValid():
-            return
-
-        # Format the selected date as a string
-        formatted_date = selected_date.toString(QtCore.Qt.DateFormat.ISODate)
-
-        # Set the selected date as the text of the return date button
-        self.return_date.setText(formatted_date)
-
-        # Store the selected return date in a class variable for later use
-        self.selected_return_date = formatted_date
-
-        # Close the dialog
-        dialog.accept()
-
+    
     def get_rental_fee(self, book_title):
         try:
             # Create connection to database
@@ -333,7 +316,7 @@ class ReturnBookDialog(object):
             # Fetch necessary data
             book_title = self.borrowedbook.currentText()
             customer_name = self.customer.currentText()
-            return_date = QDate.fromString(self.selected_return_date, QtCore.Qt.DateFormat.ISODate)
+            return_date_str = QDate.fromString(self.return_date, QtCore.Qt.DateFormat.ISODate)
 
             # Get Book ID and Customer ID
             cursor.execute("SELECT BookID FROM books WHERE Title = ?", (book_title,))
@@ -351,8 +334,8 @@ class ReturnBookDialog(object):
             rental_fee = self.get_rental_fee(book_title)
 
             # Calculate the number of days overdue
-            if return_date > rental_due_date:
-                days_overdue = max(0, rental_due_date.daysTo(return_date))
+            if return_date_str > rental_due_date:
+                days_overdue = max(0, rental_due_date.daysTo(return_date_str))
                 print(days_overdue)
             else:
                 days_overdue = 0
@@ -364,7 +347,7 @@ class ReturnBookDialog(object):
             # Insert the return record
             cursor.execute(
                 "INSERT INTO returns (CustomerId, BookId, ReturnDate, RentalDueDate, OverdueFee) VALUES (?, ?, ?, ?, ?)",
-                (customer_id, book_id, return_date.toString(QtCore.Qt.DateFormat.ISODate),
+                (customer_id, book_id, return_date_str.toString(QtCore.Qt.DateFormat.ISODate),
                  rental_due_date.toString(QtCore.Qt.DateFormat.ISODate), overdue_fee)
             )
 
@@ -375,7 +358,7 @@ class ReturnBookDialog(object):
             conn.close()
             self.dialog.accept()
             QMessageBox.information(None, "Return Book",
-                                    f"Returned by {customer_name} on {return_date.toString(QtCore.Qt.DateFormat.ISODate)} with overdue fee {overdue_fee}")
+                                    f"Returned by {customer_name} on {return_date_str.toString(QtCore.Qt.DateFormat.ISODate)} with overdue fee {overdue_fee}")
 
         except sqlite3.Error as e:
             print('Error returning book:', e)
